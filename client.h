@@ -402,3 +402,18 @@ client_wants_fullscreen(Client *c)
 #endif
 	return c->surface.xdg->toplevel->requested.fullscreen;
 }
+
+static inline pid_t
+client_pid(Client *c)
+{
+#ifdef XWAYLAND
+    if (client_is_x11(c)) {
+            return c->surface.xwayland->pid;
+    }
+#endif
+    struct wl_client *client =
+            wl_resource_get_client(c->surface.xdg->toplevel->resource);
+    pid_t pid = 0;
+    wl_client_get_credentials(client, &pid, NULL, NULL);
+    return pid;
+}

@@ -1,6 +1,7 @@
 /*
  * See LICENSE file for copyright and license details.
  */
+#include <linux/limits.h>
 #include <getopt.h>
 #include <libinput.h>
 #include <linux/input-event-codes.h>
@@ -391,6 +392,8 @@ static Monitor *xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 static void zoom(const Arg *arg);
+
+static void changetochilddir(pid_t pid);
 
 /* variables */
 static pid_t child_pid = -1;
@@ -2914,10 +2917,17 @@ setup(void)
 void
 spawn(const Arg *arg)
 {
+    pid_t selpid = 0;
+    Client* c = focustop(selmon);
+    if (c) {
+        selpid = client_pid(c);
+    }
+
 	if (fork() == 0) {
 		close(STDIN_FILENO);
 		dup2(STDERR_FILENO, STDOUT_FILENO);
 		setsid();
+                changetochilddir(selpid);
 		execvp(((char **)arg->v)[0], (char **)arg->v);
 		die("dwl: execvp %s failed:", ((char **)arg->v)[0]);
 	}
@@ -3504,6 +3514,24 @@ xwaylandready(struct wl_listener *listener, void *data)
 				xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 }
 #endif
+
+void
+changetochilddir(pid_t pid)
+{
+	char cwd_file_path[100] = {0}; // should be big enough for /proc//cwd plus large integer
+	sprintf(cwd_file_path, "/proc/%d/cwd", pid);
+
+	char cwd[PATH_MAX] = {0};
+	ssize_t len;
+
+	sprintf(cwd_file_path, "/proc/%d/cwd", pid);
+
+	len = readlink(cwd_file_path, cwd, sizeof(cwd)-1);
+	if (len == -1)
+		return;
+
+	chdir(cwd);
+}
 
 int
 main(int argc, char *argv[])
