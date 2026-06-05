@@ -197,3 +197,4 @@ static const Button buttons[] = {
 	{ ClkTagBar,   MODKEY, BTN_LEFT,   tag,            {0} },
 	{ ClkTagBar,   MODKEY, BTN_RIGHT,  toggletag,      {0} },
 };
+/* vim: set tabstop=8 softtabstop=0 noexpandtab shiftwidth=8 textwidth=100: */

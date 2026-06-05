@@ -51,3 +51,4 @@ fd_set_nonblock(int fd)
 
 	return 0;
 }
+/* vim: set tabstop=8 softtabstop=0 noexpandtab shiftwidth=8 textwidth=100: */

@@ -417,3 +417,4 @@ client_pid(Client *c)
     wl_client_get_credentials(client, &pid, NULL, NULL);
     return pid;
 }
+/* vim: set tabstop=8 softtabstop=0 noexpandtab shiftwidth=8 textwidth=100: */

@@ -3633,3 +3633,4 @@ main(int argc, char *argv[])
 usage:
 	die("Usage: %s [-v] [-d] [-s startup command]", argv[0]);
 }
+/* vim: set tabstop=8 softtabstop=0 noexpandtab shiftwidth=8 textwidth=100: */

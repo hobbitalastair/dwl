@@ -309,3 +309,4 @@ drwl_fini(void)
 {
 	fcft_fini();
 }
+/* vim: set tabstop=8 softtabstop=0 noexpandtab shiftwidth=8 textwidth=100: */
