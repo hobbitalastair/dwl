@@ -1,0 +1,33 @@
+---
+# clang-format configuration for dwl
+# Designed to be minimally invasive while providing consistent formatting
+
+Language: Cpp
+
+# Indentation - match suckless style (8-space tabs)
+IndentWidth: 8
+UseTab: ForIndentation
+TabWidth: 8
+
+# Don't modify brace style - let existing K&R style remain
+# BreakBeforeBraces is intentionally omitted to avoid reformatting
+BreakBeforeBraces: Linux
+AlwaysBreakAfterReturnType: AllDefinitions
+
+# Don't enforce line length limits
+ColumnLimit: 100
+
+# Preserve existing formatting choices
+SortIncludes: Never
+ReflowComments: false
+
+# Minimal, safe style options
+PointerAlignment: Right
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInCStyleCastParentheses: false
+SpaceAfterCStyleCast: false
+
+# Don't align things differently
+AlignTrailingComments: false
+AlignConsecutiveAssignments: false
