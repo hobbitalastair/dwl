@@ -1913,6 +1913,24 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	return 0;
 }
 
+static int
+key_is_modkey(xkb_keysym_t sym)
+{
+	switch (MODKEY) {
+	case WLR_MODIFIER_ALT:
+		return sym == XKB_KEY_Alt_L || sym == XKB_KEY_Alt_R;
+	case WLR_MODIFIER_CTRL:
+		return sym == XKB_KEY_Control_L || sym == XKB_KEY_Control_R;
+	case WLR_MODIFIER_LOGO:
+		return sym == XKB_KEY_Super_L || sym == XKB_KEY_Super_R
+			|| sym == XKB_KEY_Hyper_L || sym == XKB_KEY_Hyper_R
+			|| sym == XKB_KEY_Meta_L || sym == XKB_KEY_Meta_R;
+	case WLR_MODIFIER_SHIFT:
+		return sym == XKB_KEY_Shift_L || sym == XKB_KEY_Shift_R;
+	}
+	return 0;
+}
+
 void
 keypress(struct wl_listener *listener, void *data)
 {
@@ -1952,6 +1970,16 @@ keypress(struct wl_listener *listener, void *data)
 
 	if (handled)
 		return;
+
+	/* If MODKEY modifiers are active, consume the key instead of
+	 * forwarding it to the client. */
+	if (modkeyheld)
+		return;
+
+	/* Don't forward the MODKEY modifier key itself. */
+	for (i = 0; i < nsyms; i++)
+		if (key_is_modkey(syms[i]))
+			return;
 
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
 	/* Pass unhandled keycodes along to the client. */
