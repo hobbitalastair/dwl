@@ -17,7 +17,11 @@ DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(DWLCPPFLAGS) $(DWLDEV
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) -lm $(LIBS)
 
 all: dwl
-dwl: dwl.o util.o
+
+wlroots/build/libwlroots-0.19.a:
+	cd wlroots && meson setup build --default-library=both && ninja -C build
+
+dwl: wlroots/build/libwlroots-0.19.a dwl.o util.o
 	$(CC) dwl.o util.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
 dwl.o: dwl.c client.h config.h config.mk cursor-shape-v1-protocol.h \
 	pointer-constraints-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h \
@@ -50,12 +54,14 @@ config.h:
 	cp config.def.h $@
 clean:
 	rm -f dwl *.o *-protocol.h
+	rm -rf wlroots/build
 
 dist: clean
 	mkdir -p dwl-$(VERSION)
 	cp -R LICENSE* Makefile CHANGELOG.md README.md client.h config.def.h \
 		config.mk protocols dwl.1 dwl.c util.c util.h dwl.desktop \
-		dwl-$(VERSION)
+		.gitmodules wlroots dwl-$(VERSION)
+	rm -rf dwl-$(VERSION)/wlroots/build
 	tar -caf dwl-$(VERSION).tar.gz dwl-$(VERSION)
 	rm -rf dwl-$(VERSION)
 
