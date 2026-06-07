@@ -2972,10 +2972,16 @@ spawn(const Arg *arg)
 		selpid = client_pid(c);
 	}
 
+	struct wlr_xdg_activation_token_v1 *token =
+		wlr_xdg_activation_token_v1_create(activation);
+	const char *token_str = wlr_xdg_activation_token_v1_get_name(token);
+
 	if (fork() == 0) {
 		close(STDIN_FILENO);
 		dup2(STDERR_FILENO, STDOUT_FILENO);
 		setsid();
+		if (token_str)
+			setenv("XDG_ACTIVATION_TOKEN", token_str, 1);
 		changetochilddir(selpid);
 		execvp(((char **)arg->v)[0], (char **)arg->v);
 		die("dwl: execvp %s failed:", ((char **)arg->v)[0]);
