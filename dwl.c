@@ -180,14 +180,24 @@ typedef struct {
 	const Arg arg;
 } Key;
 
+typedef enum {
+	RepeatNone,
+	RepeatKeybinding,
+} RepeatType;
+
 typedef struct {
 	struct wlr_keyboard_group *wlr_group;
 
-	int nsyms;
-	const xkb_keysym_t *keysyms; /* invalid if nsyms == 0 */
-	uint32_t mods; /* invalid if nsyms == 0 */
+	struct {
+		RepeatType type;
+		struct wl_event_source *source;
+	} repeat;
+	struct {
+		int nsyms;
+		const xkb_keysym_t *keysyms; /* invalid if nsyms == 0 */
+		uint32_t mods; /* invalid if nsyms == 0 */
+	} keybinding_repeat;
 	uint32_t current_mods;
-	struct wl_event_source *key_repeat_source;
 
 	struct wl_listener modifiers;
 	struct wl_listener key;
@@ -382,6 +392,8 @@ static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
 static void resize(Client *c, struct wlr_box geo, int interact);
+static void repeatstart(KeyboardGroup *group, RepeatType type, int delay);
+static void repeatstop(KeyboardGroup *group);
 static void run(char *startup_cmd);
 static void scrolltoclient(Client *c);
 static void scrolling(Monitor *m);
@@ -1292,7 +1304,7 @@ createkeyboardgroup(void)
 	LISTEN(&group->wlr_group->keyboard.events.key, &group->key, keypress);
 	LISTEN(&group->wlr_group->keyboard.events.modifiers, &group->modifiers, keypressmod);
 
-	group->key_repeat_source = wl_event_loop_add_timer(event_loop, keyrepeat, group);
+	group->repeat.source = wl_event_loop_add_timer(event_loop, keyrepeat, group);
 
 	/* A seat can only have one keyboard, but this is a limitation of the
 	 * Wayland protocol - not wlroots. We assign all connected keyboards to the
@@ -1721,11 +1733,13 @@ void
 destroykeyboardgroup(struct wl_listener *listener, void *data)
 {
 	KeyboardGroup *group = wl_container_of(listener, group, destroy);
-	wl_event_source_remove(group->key_repeat_source);
+	wl_event_source_remove(group->repeat.source);
 	wl_list_remove(&group->key.link);
 	wl_list_remove(&group->modifiers.link);
 	wl_list_remove(&group->destroy.link);
 	wlr_keyboard_group_destroy(group->wlr_group);
+	if (group == kb_group)
+		kb_group = NULL;
 	free(group);
 }
 
@@ -2102,14 +2116,12 @@ keypress(struct wl_listener *listener, void *data)
 	}
 
 	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
-		group->mods = mods;
-		group->keysyms = syms;
-		group->nsyms = nsyms;
-		wl_event_source_timer_update(group->key_repeat_source,
-		                             group->wlr_group->keyboard.repeat_info.delay);
+		group->keybinding_repeat.mods = mods;
+		group->keybinding_repeat.keysyms = syms;
+		group->keybinding_repeat.nsyms = nsyms;
+		repeatstart(group, RepeatKeybinding, group->wlr_group->keyboard.repeat_info.delay);
 	} else {
-		group->nsyms = 0;
-		wl_event_source_timer_update(group->key_repeat_source, 0);
+		repeatstop(group);
 	}
 
 	if (handled)
@@ -2152,16 +2164,37 @@ keyrepeat(void *data)
 {
 	KeyboardGroup *group = data;
 	int i;
-	if (!group->nsyms || group->wlr_group->keyboard.repeat_info.rate <= 0)
+	if (group->repeat.type == RepeatNone || group->wlr_group->keyboard.repeat_info.rate <= 0)
 		return 0;
 
-	wl_event_source_timer_update(group->key_repeat_source,
+	wl_event_source_timer_update(group->repeat.source,
 	                             1000 / group->wlr_group->keyboard.repeat_info.rate);
 
-	for (i = 0; i < group->nsyms; i++)
-		keybinding(group->mods, group->keysyms[i]);
+	switch (group->repeat.type) {
+	case RepeatKeybinding:
+		for (i = 0; i < group->keybinding_repeat.nsyms; i++)
+			keybinding(group->keybinding_repeat.mods, group->keybinding_repeat.keysyms[i]);
+		break;
+	case RepeatNone:
+		break;
+	}
 
 	return 0;
+}
+
+void
+repeatstart(KeyboardGroup *group, RepeatType type, int delay)
+{
+	group->repeat.type = type;
+	wl_event_source_timer_update(group->repeat.source, delay);
+}
+
+void
+repeatstop(KeyboardGroup *group)
+{
+	group->repeat.type = RepeatNone;
+	group->keybinding_repeat.nsyms = 0;
+	wl_event_source_timer_update(group->repeat.source, 0);
 }
 
 void
