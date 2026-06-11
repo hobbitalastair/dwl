@@ -183,6 +183,7 @@ typedef struct {
 typedef enum {
 	RepeatNone,
 	RepeatKeybinding,
+	RepeatClient,
 } RepeatType;
 
 typedef struct {
@@ -197,6 +198,9 @@ typedef struct {
 		const xkb_keysym_t *keysyms; /* invalid if nsyms == 0 */
 		uint32_t mods; /* invalid if nsyms == 0 */
 	} keybinding_repeat;
+	struct {
+		uint32_t keycode;
+	} client_repeat;
 	uint32_t current_mods;
 
 	struct wl_listener modifiers;
@@ -360,6 +364,7 @@ static Client *vd_client(uint32_t vd, int index);
 static int vd_index(Client *client);
 static void vd_clamp(uint32_t vd);
 static Monitor *vd_mon(uint32_t vd);
+static uint32_t getmonotonicmsec(void);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
@@ -784,6 +789,7 @@ arrangelayers(Monitor *m)
 			/* Deactivate the focused client. */
 			focusclient(NULL, 0);
 			exclusive_focus = l;
+			repeatstop(kb_group);
 			client_notify_enter(l->layer_surface->surface, wlr_seat_get_keyboard(seat));
 			return;
 		}
@@ -1363,8 +1369,10 @@ createlocksurface(struct wl_listener *listener, void *data)
 
 	LISTEN(&lock_surface->events.destroy, &m->destroy_lock_surface, destroylocksurface);
 
-	if (m == selmon)
+	if (m == selmon) {
+		repeatstop(kb_group);
 		client_notify_enter(lock_surface->surface, wlr_seat_get_keyboard(seat));
+	}
 }
 
 void
@@ -1640,6 +1648,7 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 void
 destroylock(SessionLock *lock, int unlock)
 {
+	repeatstop(kb_group);
 	wlr_seat_keyboard_notify_clear_focus(seat);
 	if ((locked = !unlock))
 		goto destroy;
@@ -1673,10 +1682,12 @@ destroylocksurface(struct wl_listener *listener, void *data)
 
 	if (locked && cur_lock && !wl_list_empty(&cur_lock->surfaces)) {
 		surface = wl_container_of(cur_lock->surfaces.next, surface, link);
+		repeatstop(kb_group);
 		client_notify_enter(surface->surface, wlr_seat_get_keyboard(seat));
 	} else if (!locked) {
 		focusclient(focustop(selmon), 1);
 	} else {
+		repeatstop(kb_group);
 		wlr_seat_keyboard_clear_focus(seat);
 	}
 }
@@ -1858,6 +1869,7 @@ focusclient(Client *c, int lift)
 		}
 		return;
 	}
+	repeatstop(kb_group);
 
 	if ((old_client_type = toplevel_from_wlr_surface(old, &old_c, &old_l)) == XDGShell) {
 		struct wlr_xdg_popup *popup, *tmp;
@@ -1954,6 +1966,14 @@ fullscreenclient(Monitor *m)
 			return c;
 	}
 	return NULL;
+}
+
+uint32_t
+getmonotonicmsec(void)
+{
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return now.tv_sec * 1000 + now.tv_nsec / 1000000;
 }
 
 void
@@ -2102,6 +2122,8 @@ keypress(struct wl_listener *listener, void *data)
 	/* Get a list of keysyms based on the keymap for this keyboard */
 	const xkb_keysym_t *syms;
 	int nsyms = xkb_state_key_get_syms(group->wlr_group->keyboard.xkb_state, keycode, &syms);
+	int repeatable = event->state == WL_KEYBOARD_KEY_STATE_PRESSED &&
+	                 xkb_keymap_key_repeats(group->wlr_group->keyboard.keymap, keycode);
 
 	int handled = 0;
 	uint32_t mods = group->current_mods;
@@ -2140,6 +2162,11 @@ keypress(struct wl_listener *listener, void *data)
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
 	/* Pass unhandled keycodes along to the client. */
 	wlr_seat_keyboard_notify_key(seat, event->time_msec, event->keycode, event->state);
+	if (repeatable && group->wlr_group->keyboard.repeat_info.rate > 0 &&
+			group->wlr_group->keyboard.repeat_info.delay > 0) {
+		group->client_repeat.keycode = event->keycode;
+		repeatstart(group, RepeatClient, group->wlr_group->keyboard.repeat_info.delay);
+	}
 }
 
 void
@@ -2175,6 +2202,15 @@ keyrepeat(void *data)
 		for (i = 0; i < group->keybinding_repeat.nsyms; i++)
 			keybinding(group->keybinding_repeat.mods, group->keybinding_repeat.keysyms[i]);
 		break;
+	case RepeatClient:
+		if (!seat->keyboard_state.focused_surface ||
+				wlr_seat_get_keyboard(seat) != &group->wlr_group->keyboard) {
+			repeatstop(group);
+			return 0;
+		}
+		wlr_seat_keyboard_notify_key(seat, getmonotonicmsec(), group->client_repeat.keycode,
+		                             WL_KEYBOARD_KEY_STATE_REPEATED);
+		break;
 	case RepeatNone:
 		break;
 	}
@@ -2192,6 +2228,8 @@ repeatstart(KeyboardGroup *group, RepeatType type, int delay)
 void
 repeatstop(KeyboardGroup *group)
 {
+	if (!group)
+		return;
 	group->repeat.type = RepeatNone;
 	group->keybinding_repeat.nsyms = 0;
 	wl_event_source_timer_update(group->repeat.source, 0);
@@ -3678,6 +3716,7 @@ updatemons(struct wl_listener *listener, void *data)
 		}
 		focusclient(focustop(selmon), 1);
 		if (selmon->lock_surface) {
+			repeatstop(kb_group);
 			client_notify_enter(selmon->lock_surface->surface,
 			                    wlr_seat_get_keyboard(seat));
 			client_activate_surface(selmon->lock_surface->surface, 1);
@@ -3855,8 +3894,10 @@ virtualkeyboard(struct wl_listener *listener, void *data)
 	toplevel_from_wlr_surface(seat->keyboard_state.focused_surface, &c, NULL);
 	if ((!c || client_is_unmanaged(c)) && selmon)
 		c = focustop(selmon);
-	if (c)
+	if (c) {
+		repeatstop(kb_group);
 		client_notify_enter(client_surface(c), &group->wlr_group->keyboard);
+	}
 }
 
 void
