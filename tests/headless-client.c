@@ -19,6 +19,7 @@ struct client {
 	struct wl_display *display;
 	struct wl_compositor *compositor;
 	struct wl_seat *seat;
+	struct wl_keyboard *keyboard;
 	struct wl_shm *shm;
 	struct xdg_activation_v1 *activation;
 	struct xdg_wm_base *wm_base;
@@ -26,13 +27,22 @@ struct client {
 	struct xdg_surface *xdg_surface;
 	struct xdg_toplevel *toplevel;
 	struct wl_buffer *buffer;
+	struct wl_surface *child_surface;
+	struct xdg_surface *child_xdg_surface;
+	struct xdg_toplevel *child_toplevel;
+	struct wl_buffer *child_buffer;
+	struct wl_surface *activation_target;
 	int configured;
+	int child_configured;
 	int running;
 	int fullscreen;
 	int activate_before_map;
 	int activate_after_map;
 	int activate_requested_token;
+	int child_on_key_no_source_activation;
+	int child_requested;
 	uint32_t color;
+	uint32_t child_color;
 	const char *title;
 	const char *appid;
 	const char *activate_token;
@@ -108,7 +118,10 @@ xdg_surface_configure(void *data, struct xdg_surface *surface, uint32_t serial)
 {
 	struct client *c = data;
 	xdg_surface_ack_configure(surface, serial);
-	c->configured = 1;
+	if (surface == c->child_xdg_surface)
+		c->child_configured = 1;
+	else
+		c->configured = 1;
 }
 
 static const struct xdg_surface_listener xdg_surface_listener = {
@@ -150,6 +163,7 @@ static void
 activation_token_done(void *data, struct xdg_activation_token_v1 *token, const char *token_string)
 {
 	struct client *c = data;
+	struct wl_surface *target = c->activation_target ? c->activation_target : c->surface;
 
 	if (c->token_file) {
 		FILE *file;
@@ -160,16 +174,21 @@ activation_token_done(void *data, struct xdg_activation_token_v1 *token, const c
 		fclose(file);
 	}
 	if (c->activate_requested_token)
-		xdg_activation_v1_activate(c->activation, token_string, c->surface);
+		xdg_activation_v1_activate(c->activation, token_string, target);
 	xdg_activation_token_v1_destroy(token);
+	c->activation_target = NULL;
 }
 
 static const struct xdg_activation_token_v1_listener activation_token_listener = {
 	.done = activation_token_done,
 };
 
+static void create_child_from_serial(struct client *c, uint32_t serial);
+static const struct wl_seat_listener seat_listener;
+
 static void
-request_activation_token(struct client *c)
+request_activation_token(struct client *c, struct wl_surface *target, uint32_t serial,
+                         int set_serial, int set_source_surface)
 {
 	struct xdg_activation_token_v1 *token;
 
@@ -178,8 +197,112 @@ request_activation_token(struct client *c)
 	token = xdg_activation_v1_get_activation_token(c->activation);
 	xdg_activation_token_v1_add_listener(token, &activation_token_listener, c);
 	xdg_activation_token_v1_set_app_id(token, c->appid);
-	xdg_activation_token_v1_set_surface(token, c->surface);
+	if (set_serial)
+		xdg_activation_token_v1_set_serial(token, serial, c->seat);
+	if (set_source_surface)
+		xdg_activation_token_v1_set_surface(token, c->surface);
+	c->activation_target = target;
 	xdg_activation_token_v1_commit(token);
+}
+
+static void
+keyboard_keymap(void *data, struct wl_keyboard *keyboard, uint32_t format, int32_t fd,
+                uint32_t size)
+{
+	close(fd);
+}
+
+static void
+keyboard_enter(void *data, struct wl_keyboard *keyboard, uint32_t serial, struct wl_surface *surface,
+               struct wl_array *keys)
+{
+}
+
+static void
+keyboard_leave(void *data, struct wl_keyboard *keyboard, uint32_t serial, struct wl_surface *surface)
+{
+}
+
+static void
+keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t serial, uint32_t time,
+             uint32_t key, uint32_t state)
+{
+	struct client *c = data;
+
+	if (state == WL_KEYBOARD_KEY_STATE_PRESSED && c->child_on_key_no_source_activation &&
+	    !c->child_requested)
+		create_child_from_serial(c, serial);
+}
+
+static void
+keyboard_modifiers(void *data, struct wl_keyboard *keyboard, uint32_t serial, uint32_t mods_depressed,
+                   uint32_t mods_latched, uint32_t mods_locked, uint32_t group)
+{
+}
+
+static void
+keyboard_repeat_info(void *data, struct wl_keyboard *keyboard, int32_t rate, int32_t delay)
+{
+}
+
+static const struct wl_keyboard_listener keyboard_listener = {
+	.keymap = keyboard_keymap,
+	.enter = keyboard_enter,
+	.leave = keyboard_leave,
+	.key = keyboard_key,
+	.modifiers = keyboard_modifiers,
+	.repeat_info = keyboard_repeat_info,
+};
+
+static void
+seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities)
+{
+	struct client *c = data;
+
+	if ((capabilities & WL_SEAT_CAPABILITY_KEYBOARD) && !c->keyboard) {
+		c->keyboard = wl_seat_get_keyboard(seat);
+		wl_keyboard_add_listener(c->keyboard, &keyboard_listener, c);
+	} else if (!(capabilities & WL_SEAT_CAPABILITY_KEYBOARD) && c->keyboard) {
+		wl_keyboard_destroy(c->keyboard);
+		c->keyboard = NULL;
+	}
+}
+
+static void
+seat_name(void *data, struct wl_seat *seat, const char *name)
+{
+}
+
+static const struct wl_seat_listener seat_listener = {
+	.capabilities = seat_capabilities,
+	.name = seat_name,
+};
+
+static void
+create_child_from_serial(struct client *c, uint32_t serial)
+{
+	c->child_requested = 1;
+	c->activate_requested_token = 1;
+	c->child_surface = wl_compositor_create_surface(c->compositor);
+	c->child_xdg_surface = xdg_wm_base_get_xdg_surface(c->wm_base, c->child_surface);
+	xdg_surface_add_listener(c->child_xdg_surface, &xdg_surface_listener, c);
+	c->child_toplevel = xdg_surface_get_toplevel(c->child_xdg_surface);
+	xdg_toplevel_add_listener(c->child_toplevel, &toplevel_listener, c);
+	xdg_toplevel_set_title(c->child_toplevel, "child");
+	xdg_toplevel_set_app_id(c->child_toplevel, c->appid);
+	request_activation_token(c, c->child_surface, serial, 1, 0);
+	wl_surface_commit(c->child_surface);
+}
+
+static void
+maybe_map_child(struct client *c)
+{
+	if (!c->child_surface || !c->child_configured || c->child_buffer)
+		return;
+	c->child_buffer = create_buffer(c, 160, 120, c->child_color);
+	wl_surface_attach(c->child_surface, c->child_buffer, 0, 0);
+	wl_surface_damage_buffer(c->child_surface, 0, 0, 160, 120);
+	wl_surface_commit(c->child_surface);
 }
 
 static void
@@ -196,8 +319,10 @@ registry_global(void *data, struct wl_registry *registry, uint32_t name, const c
 	struct client *c = data;
 	if (!strcmp(interface, wl_compositor_interface.name))
 		c->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
-	else if (!strcmp(interface, wl_seat_interface.name))
+	else if (!strcmp(interface, wl_seat_interface.name)) {
 		c->seat = wl_registry_bind(registry, name, &wl_seat_interface, 7);
+		wl_seat_add_listener(c->seat, &seat_listener, c);
+	}
 	else if (!strcmp(interface, wl_shm_interface.name))
 		c->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
 	else if (!strcmp(interface, xdg_activation_v1_interface.name))
@@ -223,6 +348,7 @@ usage(const char *argv0)
 {
 	fprintf(stderr, "usage: %s --title TITLE --appid APPID [--color RRGGBB] [--fullscreen] "
 	                "[--token-file PATH] [--activate-requested-token] "
+	                "[--child-on-key-no-source-activation] "
 	                "[--activate-token TOKEN --activate-before-map|--activate-after-map]\n",
 	        argv0);
 	exit(2);
@@ -236,7 +362,11 @@ handle_signal(int signo)
 int
 main(int argc, char **argv)
 {
-	struct client c = {.running = 1, .title = "test", .appid = "test", .color = 0xff204060u};
+	struct client c = {.running = 1,
+	                   .title = "test",
+	                   .appid = "test",
+	                   .color = 0xff204060u,
+	                   .child_color = 0xff00ff00u};
 	struct wl_registry *registry;
 	struct sigaction sa = {.sa_handler = handle_signal};
 
@@ -259,6 +389,8 @@ main(int argc, char **argv)
 			c.activate_before_map = 1;
 		else if (!strcmp(argv[i], "--activate-after-map"))
 			c.activate_after_map = 1;
+		else if (!strcmp(argv[i], "--child-on-key-no-source-activation"))
+			c.child_on_key_no_source_activation = 1;
 		else
 			usage(argv[0]);
 	}
@@ -270,6 +402,7 @@ main(int argc, char **argv)
 		die("wl_display_connect");
 	registry = wl_display_get_registry(c.display);
 	wl_registry_add_listener(registry, &registry_listener, &c);
+	wl_display_roundtrip(c.display);
 	wl_display_roundtrip(c.display);
 	if (!c.compositor || !c.shm || !c.wm_base) {
 		fprintf(stderr, "missing required globals\n");
@@ -298,7 +431,7 @@ main(int argc, char **argv)
 	wl_display_flush(c.display);
 	if (c.activate_after_map)
 		activate_self(&c);
-	request_activation_token(&c);
+	request_activation_token(&c, c.surface, 0, 0, 1);
 	wl_display_flush(c.display);
 
 	while (c.running) {
@@ -307,8 +440,17 @@ main(int argc, char **argv)
 				break;
 			return 1;
 		}
+		maybe_map_child(&c);
 	}
 
+	if (c.child_buffer)
+		wl_buffer_destroy(c.child_buffer);
+	if (c.child_toplevel)
+		xdg_toplevel_destroy(c.child_toplevel);
+	if (c.child_xdg_surface)
+		xdg_surface_destroy(c.child_xdg_surface);
+	if (c.child_surface)
+		wl_surface_destroy(c.child_surface);
 	if (c.buffer)
 		wl_buffer_destroy(c.buffer);
 	if (c.toplevel)
@@ -323,6 +465,8 @@ main(int argc, char **argv)
 		xdg_activation_v1_destroy(c.activation);
 	if (c.shm)
 		wl_shm_destroy(c.shm);
+	if (c.keyboard)
+		wl_keyboard_destroy(c.keyboard);
 	if (c.seat)
 		wl_seat_destroy(c.seat);
 	if (c.compositor)

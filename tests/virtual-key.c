@@ -129,6 +129,7 @@ main(int argc, char **argv)
 	struct state s = {0};
 	struct wl_registry *registry;
 	uint32_t mods = 0;
+	int logo = 1;
 	int key;
 
 	if (argc < 2) {
@@ -138,6 +139,8 @@ main(int argc, char **argv)
 	for (int i = 1; i < argc - 1; i++) {
 		if (!strcmp(argv[i], "--shift"))
 			mods |= WLR_MODIFIER_SHIFT;
+		else if (!strcmp(argv[i], "--no-logo"))
+			logo = 0;
 		else {
 			fprintf(stderr, "unknown option: %s\n", argv[i]);
 			return 2;
@@ -161,15 +164,17 @@ main(int argc, char **argv)
 	send_keymap(&s);
 	wl_display_roundtrip(s.display);
 
-	zwp_virtual_keyboard_v1_key(s.keyboard, 1, KEY_LEFTMETA, WL_KEYBOARD_KEY_STATE_PRESSED);
+	if (logo)
+		zwp_virtual_keyboard_v1_key(s.keyboard, 1, KEY_LEFTMETA, WL_KEYBOARD_KEY_STATE_PRESSED);
 	if (mods & WLR_MODIFIER_SHIFT)
 		zwp_virtual_keyboard_v1_key(s.keyboard, 2, KEY_LEFTSHIFT, WL_KEYBOARD_KEY_STATE_PRESSED);
-	zwp_virtual_keyboard_v1_modifiers(s.keyboard, mods | WLR_MODIFIER_LOGO, 0, 0, 0);
+	zwp_virtual_keyboard_v1_modifiers(s.keyboard, mods | (logo ? WLR_MODIFIER_LOGO : 0), 0, 0, 0);
 	zwp_virtual_keyboard_v1_key(s.keyboard, 3, key, WL_KEYBOARD_KEY_STATE_PRESSED);
 	zwp_virtual_keyboard_v1_key(s.keyboard, 4, key, WL_KEYBOARD_KEY_STATE_RELEASED);
 	if (mods & WLR_MODIFIER_SHIFT)
 		zwp_virtual_keyboard_v1_key(s.keyboard, 5, KEY_LEFTSHIFT, WL_KEYBOARD_KEY_STATE_RELEASED);
-	zwp_virtual_keyboard_v1_key(s.keyboard, 6, KEY_LEFTMETA, WL_KEYBOARD_KEY_STATE_RELEASED);
+	if (logo)
+		zwp_virtual_keyboard_v1_key(s.keyboard, 6, KEY_LEFTMETA, WL_KEYBOARD_KEY_STATE_RELEASED);
 	zwp_virtual_keyboard_v1_modifiers(s.keyboard, 0, 0, 0, 0);
 	wl_display_flush(s.display);
 	{

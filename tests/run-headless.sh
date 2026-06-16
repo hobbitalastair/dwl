@@ -264,6 +264,11 @@ key() {
 	sleep 0.20
 }
 
+raw_key() {
+	"$BUILD/virtual-key" --no-logo "$@"
+	sleep 0.20
+}
+
 click() {
 	"$BUILD/virtual-pointer" "$@"
 	sleep 0.20
@@ -581,6 +586,15 @@ scenario_activation() {
 	wait_color ff0000
 	spawn_client B 00ff00 --activate-requested-token
 	wait_color ff0000
+
+	echo "scenario: xdg activation rejects serial token without source surface"
+	start_dwl
+	spawn_client A ff0000 --child-on-key-no-source-activation
+	wait_color ff0000
+	raw_key e
+	wait_color ff0000
+	key right
+	wait_color 00ff00
 }
 
 scenario_pointer() {
