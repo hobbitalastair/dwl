@@ -2350,9 +2350,15 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 
 		int should_focus = is_first || c->pendingactivation;
+		wlr_log(WLR_DEBUG,
+		        "activation: map appid=%s title=%s is_first=%d pending=%d should_focus=%d",
+		        client_get_appid(c), client_get_title(c), is_first, c->pendingactivation,
+		        should_focus);
 		c->pendingactivation = 0;
 
 		if (should_focus) {
+			wlr_log(WLR_DEBUG, "activation: focusing mapped client appid=%s title=%s",
+			        client_get_appid(c), client_get_title(c));
 			scrolltoclient(c);
 			focusclient(c, 1);
 		}
@@ -3461,6 +3467,8 @@ spawn(const Arg *arg)
 
 	struct wlr_xdg_activation_token_v1 *token = wlr_xdg_activation_token_v1_create(activation);
 	const char *token_str = wlr_xdg_activation_token_v1_get_name(token);
+	wlr_log(WLR_DEBUG, "activation: spawn created token=%s cmd=%s focused_appid=%s",
+	        token_str ? token_str : "(null)", ((char **)arg->v)[0], c ? client_get_appid(c) : "(none)");
 
 	if (fork() == 0) {
 		close(STDIN_FILENO);
@@ -3804,23 +3812,42 @@ requestactivate(struct wl_listener *listener, void *data)
 	struct wlr_xdg_activation_v1_request_activate_event *event = data;
 	Client *c = NULL;
 	Monitor *m;
+	wlr_log(WLR_DEBUG,
+	        "activation: request token=%s token_appid=%s token_seat=%p token_surface=%p target_surface=%p",
+	        event->token ? wlr_xdg_activation_token_v1_get_name(event->token) : "(null)",
+	        event->token && event->token->app_id ? event->token->app_id : "(null)",
+	        event->token ? (void *)event->token->seat : NULL,
+	        event->token ? (void *)event->token->surface : NULL, (void *)event->surface);
 	toplevel_from_wlr_surface(event->surface, &c, NULL);
-	if (!c)
+	if (!c) {
+		wlr_log(WLR_DEBUG, "activation: ignoring request, target surface has no client");
 		return;
+	}
+
+	wlr_log(WLR_DEBUG, "activation: request target appid=%s title=%s mapped=%d has_scene=%d vd=%u",
+	        client_get_appid(c), client_get_title(c), client_surface(c)->mapped, !!c->scene,
+	        c->virtual_desktop);
 
 	if (!c->scene) {
 		/* Client has not been mapped yet; record pendingactivation so
 		 * mapnotify() can focus it when it maps. */
+		wlr_log(WLR_DEBUG, "activation: target not mapped yet, setting pendingactivation appid=%s title=%s",
+		        client_get_appid(c), client_get_title(c));
 		c->pendingactivation = 1;
 		return;
 	}
 
 	/* Already focused - nothing to do */
-	if (c == focustop(selmon))
+	if (c == focustop(selmon)) {
+		wlr_log(WLR_DEBUG, "activation: target already focused appid=%s title=%s",
+		        client_get_appid(c), client_get_title(c));
 		return;
+	}
 
 	if ((m = vd_mon(c->virtual_desktop))) {
 		/* Virtual desktop is visible: scroll to and focus the client */
+		wlr_log(WLR_DEBUG, "activation: focusing visible target appid=%s title=%s vd=%u",
+		        client_get_appid(c), client_get_title(c), c->virtual_desktop);
 		selmon = m;
 		c->mon = m;
 		scrolltoclient(c);
@@ -3831,6 +3858,8 @@ requestactivate(struct wl_listener *listener, void *data)
 	}
 
 	/* Virtual desktop is not visible: mark urgent instead of switching */
+	wlr_log(WLR_DEBUG, "activation: target hidden, marking urgent appid=%s title=%s vd=%u",
+	        client_get_appid(c), client_get_title(c), c->virtual_desktop);
 	c->isurgent = 1;
 	drawbars();
 
@@ -3863,11 +3892,16 @@ requestactivationtoken(struct wl_listener *listener, void *data)
 {
 	struct wlr_xdg_activation_token_v1 *token = data;
 	PendingActivationTokenDestroy *pending;
+	wlr_log(WLR_DEBUG, "activation: new token=%s appid=%s seat=%p surface=%p serial=%u",
+	        wlr_xdg_activation_token_v1_get_name(token), token->app_id ? token->app_id : "(null)",
+	        (void *)token->seat, (void *)token->surface, token->serial);
 
 	/* Client-minted tokens without a seat serial don't prove user intent. Destroy
 	 * them after wlroots finishes sending the token string to avoid use-after-free
 	 * inside the new_token signal emission. */
 	if (!token->seat) {
+		wlr_log(WLR_DEBUG, "activation: scheduling destruction of seatless client token=%s",
+		        wlr_xdg_activation_token_v1_get_name(token));
 		pending = ecalloc(1, sizeof(*pending));
 		pending->token = token;
 		pending->destroy.notify = destroyactivationtokennotify;
