@@ -3827,6 +3827,12 @@ requestactivate(struct wl_listener *listener, void *data)
 	wlr_log(WLR_DEBUG, "activation: request target appid=%s title=%s mapped=%d has_scene=%d vd=%u",
 	        client_get_appid(c), client_get_title(c), client_surface(c)->mapped, !!c->scene,
 	        c->virtual_desktop);
+	if (event->token && event->token->seat && !event->token->surface) {
+		wlr_log(WLR_DEBUG,
+		        "activation: rejecting client token without source surface appid=%s title=%s",
+		        client_get_appid(c), client_get_title(c));
+		return;
+	}
 
 	if (!c->scene) {
 		/* Client has not been mapped yet; record pendingactivation so
